@@ -8,6 +8,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -51,7 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "-v", "--verbose", action="store_true",
-        help="Enable verbose logging",
+        help="Enable verbose logging (also triggers --pose-debug auto output)",
     )
     analyze.add_argument(
         "--no-progress", action="store_true",
@@ -60,6 +61,15 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze.add_argument(
         "--debug-dir", type=Path, default=None,
         help="Save RTMPose keypoints, world positions, and phase labels as .npy files here",
+    )
+    analyze.add_argument(
+        "--pose-debug", type=Path, default=None, metavar="PATH",
+        nargs="?", const=Path("__auto__"),
+        help=(
+            "Write RTMPose skeleton-overlay debug MP4 after Pass 1.  "
+            "If PATH is omitted, saves to rtmpose_output/<video_stem>_pose_debug.mp4.  "
+            "-v also enables this with the auto path."
+        ),
     )
 
     return parser
@@ -139,6 +149,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         pose_estimator = RTMPoseEstimator(
             model_path=rtmpose_model_path,
             device=config.device,
+            input_size=config.rtmpose_input_size,
         )
     except Exception as e:
         print(f"Error loading RTMPose model: {e}", file=sys.stderr)
@@ -149,11 +160,47 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         confidence_threshold=config.detection_score_threshold,
     )
 
+    # Person detector (optional, improves accuracy significantly)
+    detector = None
+    rtmdet_model_path = getattr(args, "rtmdet_model", None)
+    if rtmdet_model_path is None:
+        _candidate = config.model_dir / "rtmdet_nano_320-8bbb47ba.onnx"
+        if _candidate.exists():
+            rtmdet_model_path = _candidate
+
+    if rtmdet_model_path is not None and Path(rtmdet_model_path).exists():
+        try:
+            from .detection.rtmdet import RTMDetDetector
+            detector = RTMDetDetector(model_path=rtmdet_model_path, device=config.device)
+            if args.verbose:
+                print(f"Person detector: {rtmdet_model_path}")
+        except Exception as e:
+            print(f"Warning: RTMDet load failed ({e}), using full-frame fallback", file=sys.stderr)
+    else:
+        if args.verbose:
+            print("Warning: No RTMDet model found. Using full-frame fallback (reduced accuracy).")
+
+    # Resolve pose debug output path:
+    # --pose-debug PATH  → use PATH
+    # --pose-debug       → auto path (const "__auto__")
+    # -v with no flag    → also auto path
+    _SENTINEL = Path("__auto__")
+    pose_debug_path: Optional[Path] = None
+    raw_pd = getattr(args, "pose_debug", None)
+    if raw_pd is not None and raw_pd != _SENTINEL:
+        pose_debug_path = raw_pd
+    elif raw_pd == _SENTINEL or args.verbose:
+        pose_debug_path = (
+            Path("rtmpose_output") / f"{video_path.stem}_pose_debug.mp4"
+        )
+
     processor = GaitProcessor(
         config=config,
         pose_estimator=pose_estimator,
         tracker=tracker,
+        detector=detector,
         debug_dir=args.debug_dir,
+        pose_debug_path=pose_debug_path,
     )
 
     progress_callback = _make_progress_callback(
@@ -192,6 +239,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print(f"  Away time:    {gm.away_6m_time_sec:.2f}s")
     print(f"  Turning time: {gm.turning_time_sec:.2f}s")
     print(f"  Results:      {output_path}")
+    if pose_debug_path is not None:
+        print(f"  Pose debug:   {pose_debug_path}")
 
     return 0
 

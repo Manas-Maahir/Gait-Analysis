@@ -7,8 +7,8 @@ that flow to the next stage. This enables:
 - Debugging (full trace of data transformation through pipeline)
 """
 
-from dataclasses import dataclass
-from typing import Sequence
+from dataclasses import dataclass, field
+from typing import Sequence, Optional
 
 import numpy as np
 
@@ -47,6 +47,9 @@ class Pass1Result:
 
     video_path: str
     """Path to input video"""
+
+    bboxes: Optional[np.ndarray] = field(default=None)
+    """(N, 4) array [x1, y1, x2, y2] of bboxes fed to pose estimator per frame (debug)"""
 
 
 @dataclass(frozen=True)

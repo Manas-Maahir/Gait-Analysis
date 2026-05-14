@@ -35,6 +35,9 @@ class StriderConfig(BaseModel):
     device: Literal["cpu", "cuda"] = "cpu"
     """Inference device. GPU support planned for Phase 2+."""
 
+    rtmpose_input_size: tuple[int, int] = (384, 288)
+    """RTMPose model input dimensions (H, W). Default is 384×288."""
+
     # ========== Video Processing ==========
 
     target_fps: float = 30.0

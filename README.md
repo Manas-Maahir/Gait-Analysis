@@ -1,8 +1,8 @@
-# Strider — Clinical Gait Analysis System
+# STRIDE — Clinical Gait Analysis System
 
 **Advanced monocular video-based gait analysis for neurological movement disorders.**
 
-Strider analyzes single RGB video of a standardized 6-meter walk test and produces clinically meaningful gait metrics with an interactive analysis dashboard. Designed for Parkinson's disease research, gait abnormality detection, and rehabilitation monitoring.
+STRIDE analyzes single RGB video of a standardized 6-meter walk test and produces clinically meaningful gait metrics with an interactive analysis dashboard. Designed for Parkinson's disease research, gait abnormality detection, and rehabilitation monitoring.
 
 ## Key Features
 

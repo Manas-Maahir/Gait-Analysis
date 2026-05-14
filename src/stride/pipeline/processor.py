@@ -18,6 +18,7 @@ from ..config import StriderConfig
 from ..core.protocols import (
     PoseEstimator,
     Tracker,
+    PersonDetector,
     Calibrator,
     GaitEventDetector,
     MetricComputer,
@@ -47,7 +48,9 @@ def run_pass1(
     config: StriderConfig,
     pose_estimator: Optional[PoseEstimator] = None,
     tracker: Optional[Tracker] = None,
+    detector: Optional[PersonDetector] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    pose_debug_path: Optional[Path] = None,
 ) -> Pass1Result:
     """Execute Pass 1: video I/O, pose estimation, tracking, keypoint smoothing.
 
@@ -56,7 +59,10 @@ def run_pass1(
         config: StriderConfig instance
         pose_estimator: PoseEstimator protocol implementation (optional)
         tracker: Tracker protocol implementation (optional)
+        detector: PersonDetector protocol implementation (optional)
         progress_callback: Optional callback fn(progress_pct, stage_name)
+        pose_debug_path: If set, write skeleton-overlay debug MP4 here after
+                         the main frame loop completes (Pass 1 only).
 
     Returns:
         Pass1Result with raw keypoints, timestamps, track IDs
@@ -72,6 +78,7 @@ def run_pass1(
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
     cap = None
+    pass1_result: Optional[Pass1Result] = None
     try:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -104,6 +111,10 @@ def run_pass1(
         keypoints_list = []
         timestamps_list = []
         track_ids_list = []
+        bboxes_list = []
+
+        # Diagnostics (for debug CSV if debug_dir is set)
+        confidence_debug_list = []
 
         # Phase 1: Patient selector (lock to largest bbox at frame 0)
         locked_track_id: Optional[int] = None
@@ -127,9 +138,16 @@ def run_pass1(
             if not ret or frame_idx >= total_frames:
                 break
 
-            # Phase 1: full-frame bbox (no person detector)
-            # Pass to ByteTrack as a single detection tuple (x1,y1,x2,y2,conf)
-            detections = [(0.0, 0.0, frame_width_f, frame_height_f, 1.0)]
+            # Person detection: use RTMDet if available, else full-frame fallback
+            if detector is not None:
+                detected_bboxes = detector.detect(frame)
+                detections = [(b.x1, b.y1, b.x2, b.y2, b.confidence) for b in detected_bboxes]
+                if not detections:  # no person found → low-conf fallback
+                    detections = [(0.0, 0.0, frame_width_f, frame_height_f, 0.5)]
+            else:
+                # Legacy full-frame fallback (reduced accuracy without detector)
+                detections = [(0.0, 0.0, frame_width_f, frame_height_f, 1.0)]
+
             tracked = bytetrack.update(detections)
 
             # Patient selection: lock to largest area track at frame 0
@@ -152,6 +170,9 @@ def run_pass1(
                 bbox = fullframe_bbox
                 track_ids_list.append(locked_track_id if locked_track_id else 0)
 
+            # Store bbox for diagnostics
+            bboxes_list.append([bbox.x1, bbox.y1, bbox.x2, bbox.y2])
+
             # Pose estimation
             try:
                 kf = pose_estimator.estimate(frame, bbox)
@@ -163,6 +184,28 @@ def run_pass1(
                 keypoints_list.append(np.zeros((n_kpts, 3), dtype=np.float32))
 
             timestamps_list.append(frame_idx / fps)
+
+            # Confidence diagnostics
+            if keypoints_list:
+                kpts = keypoints_list[-1]
+                body_confs = kpts[:17, 2]  # COCO-17 body only
+                mean_conf = float(np.mean(body_confs)) if len(body_confs) > 0 else 0.0
+                frac_below_low = float(np.mean(body_confs < 0.10))
+                frac_below_med = float(np.mean(body_confs < 0.35))
+                bbox_area = (bbox.x2 - bbox.x1) * (bbox.y2 - bbox.y1)
+                frame_area = float(frame_width * frame_height)
+                bbox_area_pct = (bbox_area / frame_area) * 100 if frame_area > 0 else 0.0
+                track_id = track_ids_list[-1] if track_ids_list else 0
+
+                confidence_debug_list.append({
+                    'frame_idx': frame_idx,
+                    'timestamp': timestamps_list[-1],
+                    'track_id': track_id,
+                    'mean_conf': mean_conf,
+                    'frac_below_low': frac_below_low,
+                    'frac_below_med': frac_below_med,
+                    'bbox_area_pct': bbox_area_pct,
+                })
 
             # Report per-frame progress: 5%→60% range
             if progress_callback and frame_idx % max(1, total_frames // 100) == 0:
@@ -176,6 +219,7 @@ def run_pass1(
         keypoints = np.stack(keypoints_list, axis=0)  # (N, n_kpts, 3)
         timestamps = np.array(timestamps_list, dtype=np.float32)
         track_ids = np.array(track_ids_list, dtype=np.int32)
+        bboxes = np.array(bboxes_list, dtype=np.float32) if bboxes_list else None
 
         # Smooth keypoints with OneEuro filter
         if progress_callback:
@@ -186,7 +230,7 @@ def run_pass1(
             fcmin=1.0, beta=0.5,
         )
 
-        return Pass1Result(
+        pass1_result = Pass1Result(
             keypoints=keypoints_smoothed,
             timestamps=timestamps,
             track_ids=track_ids,
@@ -194,11 +238,47 @@ def run_pass1(
             total_frames=actual_frames,
             schema=schema,
             video_path=str(video_path),
+            bboxes=bboxes,
         )
 
     finally:
         if cap is not None:
             cap.release()
+
+    # Debug CSV export (confidence diagnostics) — if debug_dir is set
+    if config.save_intermediate_data and pass1_result is not None and confidence_debug_list:
+        try:
+            config.output_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = config.output_dir / "confidence_per_frame.csv"
+            import csv
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=[
+                    'frame_idx', 'timestamp', 'track_id', 'mean_conf',
+                    'frac_below_low', 'frac_below_med', 'bbox_area_pct',
+                ])
+                writer.writeheader()
+                writer.writerows(confidence_debug_list)
+            if config.verbose:
+                print(f"[Diagnostics] Confidence CSV → {csv_path}")
+        except Exception as e:
+            if config.verbose:
+                print(f"Warning: confidence CSV export failed: {e}")
+
+    # Debug video export (optional, Pass 1 only) — runs after cap is released
+    if pose_debug_path is not None and pass1_result is not None:
+        try:
+            from ..visualization.pose_debug_writer import PoseDebugWriter
+            PoseDebugWriter().write(
+                video_path=str(video_path),
+                pass1_result=pass1_result,
+                output_path=pose_debug_path,
+                verbose=config.verbose,
+            )
+        except Exception as _dbg_exc:
+            if config.verbose:
+                print(f"Warning: pose debug video export failed: {_dbg_exc}")
+
+    return pass1_result
 
 
 def run_pass2(
@@ -445,11 +525,13 @@ class GaitProcessor:
         config: Optional[StriderConfig] = None,
         pose_estimator: Optional[PoseEstimator] = None,
         tracker: Optional[Tracker] = None,
+        detector: Optional[PersonDetector] = None,
         calibrator: Optional[Calibrator] = None,
         event_detector: Optional[GaitEventDetector] = None,
         metric_computer: Optional[MetricComputer] = None,
         clinical_analyzer: Optional[ClinicalAnalyzer] = None,
         debug_dir: Optional[Path] = None,
+        pose_debug_path: Optional[Path] = None,
     ):
         """Initialize the gait processor with optional DI.
 
@@ -457,19 +539,24 @@ class GaitProcessor:
             config: StriderConfig instance. If None, uses defaults.
             pose_estimator: PoseEstimator protocol. If None, will raise error in run_pass1.
             tracker: Tracker protocol. If None, will raise error in run_pass1.
+            detector: PersonDetector protocol. If None, uses full-frame fallback.
             calibrator: Calibrator protocol. If None, will raise error in run_pass2.
             event_detector: GaitEventDetector protocol. If None, will raise error in run_pass2.
             metric_computer: MetricComputer protocol. If None, will raise error in run_pass2.
             clinical_analyzer: ClinicalAnalyzer protocol. Optional.
+            debug_dir: If set, save keypoints.npy / world_positions.npy / summary.txt here.
+            pose_debug_path: If set, write RTMPose skeleton-overlay debug MP4 here after Pass 1.
         """
         self.config = config or StriderConfig()
         self._pose_estimator = pose_estimator
         self._tracker = tracker
+        self._detector = detector
         self._calibrator = calibrator
         self._event_detector = event_detector
         self._metric_computer = metric_computer
         self._clinical_analyzer = clinical_analyzer
         self._debug_dir = debug_dir
+        self._pose_debug_path = pose_debug_path
 
     def process(
         self,
@@ -505,7 +592,9 @@ class GaitProcessor:
                 self.config,
                 pose_estimator=self._pose_estimator,
                 tracker=self._tracker,
+                detector=self._detector,
                 progress_callback=report_progress,
+                pose_debug_path=self._pose_debug_path,
             )
 
             # Pass 2: Metric computation

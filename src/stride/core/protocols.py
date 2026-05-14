@@ -63,6 +63,21 @@ class FrameData:
     confidence: float = 1.0
 
 
+class PersonDetector(Protocol):
+    """Protocol for person detection models."""
+
+    def detect(self, frame: np.ndarray) -> Sequence[BoundingBox]:
+        """Detect persons in a frame.
+
+        Args:
+            frame: BGR image (H, W, 3) uint8
+
+        Returns:
+            List of BoundingBox objects, sorted by area descending
+        """
+        ...
+
+
 class PoseEstimator(Protocol):
     """Protocol for pose estimation models."""
 
