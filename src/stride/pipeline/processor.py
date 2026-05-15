@@ -144,6 +144,8 @@ def run_pass1(
                 detections = [(b.x1, b.y1, b.x2, b.y2, b.confidence) for b in detected_bboxes]
                 if not detections:  # no person found → low-conf fallback
                     detections = [(0.0, 0.0, frame_width_f, frame_height_f, 0.5)]
+                if config.verbose and frame_idx % 30 == 0:
+                    print(f"  Frame {frame_idx}: {len(detected_bboxes)} RTMDet detection(s)")
             else:
                 # Legacy full-frame fallback (reduced accuracy without detector)
                 detections = [(0.0, 0.0, frame_width_f, frame_height_f, 1.0)]

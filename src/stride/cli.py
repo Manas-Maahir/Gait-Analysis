@@ -171,9 +171,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if rtmdet_model_path is not None and Path(rtmdet_model_path).exists():
         try:
             from .detection.rtmdet import RTMDetDetector
-            detector = RTMDetDetector(model_path=rtmdet_model_path, device=config.device)
+            detector = RTMDetDetector(model_path=rtmdet_model_path, device=config.device, conf_threshold=0.15)
             if args.verbose:
-                print(f"Person detector: {rtmdet_model_path}")
+                print(f"Person detector: {rtmdet_model_path} (conf_threshold=0.15)")
         except Exception as e:
             print(f"Warning: RTMDet load failed ({e}), using full-frame fallback", file=sys.stderr)
     else:

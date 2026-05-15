@@ -112,7 +112,8 @@ class RTMDetDetector:
     ) -> list[BoundingBox]:
         """Decode ONNX outputs to bounding boxes.
 
-        Handles both NMS-included and raw anchor formats.
+        Handles both single-tensor and two-tensor (boxes + labels) formats.
+        RTMDet ONNX from bukuroo outputs: dets (1, N, 5), labels (1, N)
 
         Args:
             outputs: List of ONNX output tensors
@@ -126,8 +127,6 @@ class RTMDetDetector:
         if len(outputs) < 1:
             return []
 
-        # Try NMS-included format first (MMDeploy export)
-        # Output shape typically: (1, N, 5) where 5 = [x1, y1, x2, y2, conf]
         dets = outputs[0]
         if dets.ndim == 3:
             dets = dets.squeeze(0)  # (N, 5)
@@ -135,7 +134,20 @@ class RTMDetDetector:
         if len(dets) == 0:
             return []
 
-        # Assume format: [x1, y1, x2, y2, conf, ...] (at least 5 columns)
+        # Handle two-tensor format (boxes + labels)
+        labels = None
+        if len(outputs) >= 2:
+            labels = outputs[1]
+            if labels.ndim == 2:
+                labels = labels.squeeze(0)  # (N,)
+            # Filter to person class (label 0)
+            if labels is not None:
+                person_mask = labels == 0
+                dets = dets[person_mask]
+                if len(dets) == 0:
+                    return []
+
+        # Single-tensor format: [x1, y1, x2, y2, conf, ...]
         if dets.shape[1] >= 5:
             confs = dets[:, 4].astype(np.float32)
             mask = confs >= self.conf_threshold
