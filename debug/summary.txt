@@ -1,0 +1,5 @@
+Frames: 838
+Left ankle conf  mean=0.000  min=0.000  max=0.000
+Phase AWAY: 838 frames
+World X range: 0.00 to 0.00 m
+Foot strikes detected: 0

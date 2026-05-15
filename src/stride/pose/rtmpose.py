@@ -27,7 +27,7 @@ class RTMPoseEstimator:
     def __init__(
         self,
         model_path: str | Path,
-        input_size: tuple[int, int] = (384, 288),
+        input_size: tuple[int, int] = (256, 192),
         simcc_split_ratio: float = 2.0,
         device: str = "cpu",
     ):

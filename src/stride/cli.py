@@ -164,7 +164,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     detector = None
     rtmdet_model_path = getattr(args, "rtmdet_model", None)
     if rtmdet_model_path is None:
-        _candidate = config.model_dir / "rtmdet_nano_320-8bbb47ba.onnx"
+        _candidate = config.model_dir / "rtmdet-n-person.onnx"
         if _candidate.exists():
             rtmdet_model_path = _candidate
 

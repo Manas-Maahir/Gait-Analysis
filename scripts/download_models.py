@@ -38,14 +38,25 @@ def download_models():
             "required": True,
         },
         "rtmdet_nano": {
-            "filename": "rtmdet_nano_320-8bbb47ba.onnx",
+            "filename": "rtmdet-n-person.onnx",
             "urls": [
-                # RTMDet nano: not currently used in pipeline (foot strike uses scipy.signal.find_peaks)
-                "https://download.openmmlab.com/mmdetection/v2.0/rtmdet/rtmdet_nano_8xb32-100e_coco_obj365-person-05d8511e.onnx",
+                # HuggingFace bukuroo/RTMDet-ONNX: pre-converted, ONNX Runtime ready (person detection)
+                "https://huggingface.co/bukuroo/RTMDet-ONNX/resolve/main/rtmdet-n-person.onnx",
             ],
-            "size_mb": 10,
-            "manual_guide": "https://github.com/open-mmlab/mmdetection/tree/main/projects/rtmdet",
+            "size_mb": 4,
+            "manual_guide": "https://huggingface.co/bukuroo/RTMDet-ONNX (nano, small, medium, large variants available for person detection)",
+            "required": True,
+        },
+        "yolov8_medium": {
+            "filename": "yolov8m.onnx",
+            "urls": [
+                # YOLOv8-medium: backup detector if RTMDet fails
+                "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8m.onnx",
+            ],
+            "size_mb": 50,
+            "manual_guide": "https://github.com/ultralytics/ultralytics (fallback only)",
             "required": False,
+            "note": "Only downloaded if RTMDet-nano fails. Requires separate integration code.",
         },
     }
 
