@@ -162,10 +162,18 @@ class SVDAutoCalibrator:
         U, S, Vt = np.linalg.svd(centered, full_matrices=False)
         direction = Vt[0]  # Principal component (walking direction)
 
-        # SVD direction sign is arbitrary — ensure it points forward (proj increases over walk)
+        # For the 6m walk-toward-turn-walk-away protocol the turn (nearest point to camera)
+        # falls near the temporal midpoint of the recording. The correct direction has its
+        # peak projection at the midpoint, not at the ends. Compare the central 20 % of
+        # frames against the first 20 % and flip if the midpoint is lower — this is more
+        # reliable than the quarter-based check for a symmetric walk whose first and last
+        # quarters both sit at the far end of the path (equal projection ≈ no clear signal).
         proj_check = centered @ direction
-        q = max(1, len(proj_check) // 4)
-        if np.mean(proj_check[:q]) > np.mean(proj_check[-q:]):
+        q = max(2, len(proj_check) // 5)
+        mid = len(proj_check) // 2
+        proj_mid = float(np.mean(proj_check[max(0, mid - q // 2) : mid + q // 2]))
+        proj_start = float(np.mean(proj_check[:q]))
+        if proj_mid < proj_start:
             direction = -direction
 
         # Compute PC1 variance
@@ -191,13 +199,20 @@ class SVDAutoCalibrator:
 
         pixels_to_meters = self.path_length_m / proj_range
 
-        # Construct transformation: world_pt = scale * direction * (img_pt - mean)
-        # This is not a full homography (3x3), but we create one for compatibility
+        # Construct transformation.
+        # Baseline (unanchored): world_x = scale * dot(pixel - mean, direction)
+        # This centres world_x at 0, giving ≈ [−3, +3] for a 6 m path.
+        #
+        # Anchoring: subtract proj_min so that world_x = 0 at the trajectory start
+        # (person standing at the far end of the path) and world_x = 6 m at the turn.
+        # Algebraically: world_x = scale * (dot(pixel - mean, direction) - proj_min)
+        # which folds proj_min into the translation term of H[0,2].
+        proj_min = float(np.min(proj))
         scale = pixels_to_meters
         H = np.eye(3, dtype=np.float32)
         H[0, 0] = direction[0] * scale
         H[0, 1] = direction[1] * scale
-        H[0, 2] = -(mean[0] * direction[0] + mean[1] * direction[1]) * scale
+        H[0, 2] = -(mean[0] * direction[0] + mean[1] * direction[1]) * scale - proj_min * scale
         H[1, 0] = -direction[1] * scale
         H[1, 1] = direction[0] * scale
         H[1, 2] = -(mean[0] * (-direction[1]) + mean[1] * direction[0]) * scale

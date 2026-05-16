@@ -85,7 +85,12 @@ class OneEuroFilter:
         Returns:
             Alpha coefficient for EMA update
         """
-        return 1.0 / (1.0 + cutoff * self.dt)
+        # Standard 1st-order Euler approximation: alpha = tau_c*dt / (tau_c*dt + 1)
+        # where tau_c = cutoff (in rad/s) * dt gives the normalised cutoff.
+        # Large fc (fast motion) → alpha → 1 (responsive, follows signal).
+        # Small fc (slow/still)  → alpha → 0 (smooth, holds previous value).
+        t = cutoff * self.dt
+        return t / (1.0 + t)
 
     def reset(self) -> None:
         """Reset filter state (for processing new sequences)."""

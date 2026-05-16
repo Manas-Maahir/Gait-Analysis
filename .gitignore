@@ -2,7 +2,8 @@
 CLAUDE.md
 
 # Video files
-Healthy.mp4
+*.mp4
+tests/*.mp4
 
 # Python
 __pycache__/
@@ -55,3 +56,8 @@ com*
 # Environment variables
 .env
 .env.local
+
+# Downloaded models (large binary files)
+models/
+*.onnx
+*.pt

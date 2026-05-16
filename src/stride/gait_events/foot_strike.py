@@ -8,6 +8,7 @@ adaptive peak prominence and fallback to mediolateral displacement.
 from typing import Optional
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
 from stride.core import KeypointSchema, Phase, Side
@@ -158,6 +159,12 @@ class FootStrikeDetector:
         nans = np.isnan(signal_clean)
         x = lambda z: z.nonzero()[0]
         signal_clean[nans] = np.interp(x(nans), x(~nans), signal_clean[~nans])
+
+        # Remove slow approach/recession trend (perspective size change) so step
+        # oscillations (~0.8 s) are detectable. Gaussian cutoff ~0.11 Hz (1.5 s sigma)
+        # sits above the arch frequency (~0.07 Hz) but below step frequency (~1.25 Hz).
+        trend = gaussian_filter1d(signal_clean, sigma=max(1.0, self.fps * 1.5))
+        signal_clean = signal_clean - trend
 
         # Normalize to [0, 1]
         sig_min = np.nanmin(signal_clean)
